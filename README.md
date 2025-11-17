@@ -26,13 +26,13 @@
 | Language | Python |
 
 ---
-
+## [URL](https://project2.ai-softdev.com)
 ## 📦 Installation & Run
 
 ### Clone the repository
 
 ```
-git clone https://github.com/yourname/voice2img.git
+git clone https://github.com/kametshi/speech_to_image.git
 cd voice2img
 ```
 
@@ -111,6 +111,7 @@ if st.button("Generate Image", use_container_width=True):
 
 - 🎤 Recorded speech
 - 🗣 Any spoken description
+
 
 
 
