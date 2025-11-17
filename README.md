@@ -1,126 +1,116 @@
-# 🎤 Voice → 🧠 AI → 🎨 Image  
-**Convert any voice recording into an AI-generated image using Whisper + LLM + Flux**
+# 🎤 Voice → 🎨 Image Generator
 
-This project is a Streamlit application that takes an audio file, transcribes it into text, transforms the text into an image prompt using an LLM, and finally generates an image via Flux 1.1 Pro.
-
----
-
-## 🚀 Features
-
-- 🎙 Upload voice/audio files (`wav`, `mp3`, `m4a`, `ogg`)
-- 🧠 Automatic speech-to-text transcription (Google STT)
-- ✨ LLM prompt generation using **Hermes 3 – Llama 3.1 405B**
-- 🎨 Image generation using **Flux 1.1 Pro**
-- 📸 Clean UI built with Streamlit
-- 💾 Full session state (transcript, prompt, result image)
+> Instantly convert recorded speech into an AI-generated image using Streamlit, Google STT, and DeepAI.
 
 ---
 
-## 🧩 Tech Stack
+## 🚀 Key Features
 
-| Component | Model / Library |
-|----------|-----------------|
-| Speech-to-Text | Google SpeechRecognition |
-| LLM | `nousresearch/hermes-3-llama-3.1-405b` |
-| Image Gen | `black-forest-labs/flux-1.1-pro` |
-| Backend API | OpenRouter |
+| Feature | Description |
+| :--- | :--- |
+| 🎙️ Voice Recording | `audio_recorder_streamlit` captures microphone input directly in the browser. |
+| 🧠 Speech-to-Text | Google STT via `speech_recognition.recognize_google`. |
+| 🎨 Image Generation | `requests.post` to DeepAI `text2img` API. |
+| ✨ UI | Built entirely with Streamlit. |
+
+---
+
+## ⚙️ Tech Stack
+
+| Component | Technology / Service |
+| :--- | :--- |
 | UI | Streamlit |
-| Audio Processing | pydub |
+| Audio Capture | audio-recorder-streamlit |
+| STT Engine | SpeechRecognition (Google STT) |
+| Image Gen | DeepAI Text2Img API |
+| Language | Python |
 
 ---
 
-## 📦 Installation
+## 📦 Installation & Run
 
-### 1️⃣ Clone the repo
-```bash
+### Clone the repository
+
+```
 git clone https://github.com/yourname/voice2img.git
 cd voice2img
 ```
 
-### 2️⃣ Install dependencies
+### Install dependencies
+
 ```
 pip install -r requirements.txt
 ```
 
-### 3️⃣ Set your OpenRouter API key
+### API Key Configuration (config.py)
+
 ```
-Create .env file or edit directly:
-OPENROUTER_KEY="your_api_key_here"
+# config.py
+class Settings:
+    DEEPAI_KEY = "YOUR_DEEPAI_API_KEY_HERE"
+
+settings = Settings()
 ```
 
-### ▶️ Run the app
+
+### Launch the app
+
 ```
 streamlit run app.py
 ```
 
-### The app will open in your browser:
-[URL](https://project1.ai-softdev.com/)
+### 🛠 Key Functions (app.py)
 
-## 🛠 How It Works
+```
+# transcribe_google
 
-### 1. Upload audio
-```
-Any of these formats: wav/mp3/m4a/ogg.
-```
-
-### 2. Transcription
-```
-transcribe_online(audio_bytes)
-```
-
-Uses Google SpeechRecognition to convert speech → text.
-
-### 3. Build an image prompt
-```
-build_prompt(user_text)
+def transcribe_google(audio_bytes: bytes, lang="en-US"):
+    try:
+        with sr.AudioFile(io.BytesIO(audio_bytes)) as source:
+            audio_data = recognizer.record(source)
+        return recognizer.recognize_google(audio_data, language=lang)
+    except:
+        return "(speech recognition failed)"
 ```
 
-LLM rewrites your text into a detailed image prompt:
-- style
-- mood
-- environment
-- details
-
-### 4. Generate final image
 ```
-generate_image(prompt)
-```
+# generate_image
 
-Flux 1.1 Pro returns a 1024×1024 generated image.
-
-## 📂 Project Structure Overview
-```bash
-app.py               # Main Streamlit app
+def generate_image(prompt: str) -> Image.Image:
+    url = "[https://api.deepai.org/api/text2img](https://api.deepai.org/api/text2img)"
+    response = requests.post(
+        url,
+        data={"text": prompt},
+        headers={"Api-Key": settings.DEEPAI_KEY}
+    )
+    return Image.open(io.BytesIO(img_bytes)).convert("RGB")
 ```
 
-## 🪄 Example Workflow
+### Main Streamlit Logic
 
-- Upload audio: "a peaceful forest with soft wind"
-- Whisper → “a peaceful forest with soft wind”
-- LLM → “A serene green forest, soft golden sunlight, light mist, high-detail cinematic style…”
-- Flux → Final image rendered on screen.
+```
+if st.button("Generate Image", use_container_width=True):
+    if not audio_bytes:
+        st.error("Please record audio first.")
+    else:
+        with st.spinner("Transcribing Speech..."):
+            text = transcribe_google(audio_bytes)
 
-## 🧪 Supported Audio Inputs
+        st.markdown(f"""
+        <div class="result-box">{text}</div>
+        """, unsafe_allow_html=True)
 
-- 🎧 Voice messages
+        if text != "(speech recognition failed)":
+            with st.spinner("🎨 Generating Image..."):
+                img = generate_image(text)
+            st.image(img, use_container_width=True)
+            st.success("Done!")
+```
+
+## Supported Audio Inputs
+
 - 🎤 Recorded speech
-- 📱 Phone voice notes
 - 🗣 Any spoken description
 
-## ⚠️ Notes & Limitations
 
-- Google STT depends on audio clarity
-- Long audio files may slow down transcription
-- OpenRouter models require internet access
-- Whisper (local) model placeholder (/not wired)
 
-## ❤️ Credits
-
-- Built using:
-- Streamlit
-- OpenRouter
-- Hermes 3 (Llama 3.1 405B)
-- Flux 1.1 Pro
-- SpeechRecognition
-- PIL
-- pydub

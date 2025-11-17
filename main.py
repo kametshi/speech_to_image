@@ -1,222 +1,110 @@
-import json
-import uvicorn
-from fastapi import FastAPI
-from pydantic import BaseModel
-import psycopg2
+import io
 import requests
-from trello import TrelloClient
-import seed
+import streamlit as st
+import speech_recognition as sr
+from PIL import Image
+from audio_recorder_streamlit import audio_recorder
 
-app = FastAPI()
+from config import settings
 
-OPENROUTER_API_KEY = "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"
+recognizer = sr.Recognizer()
 
-conn = psycopg2.connect(
-    host="localhost",
-    database="sales",
-    user="postgres",
-    password="zec123123"
-)
-cursor = conn.cursor()
-
-# Trello
-
-def list_tables():
-    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='public'")
-    return [row[0] for row in cursor.fetchall()]
+def transcribe_google(audio_bytes: bytes, lang="en-US"):
+    try:
+        with sr.AudioFile(io.BytesIO(audio_bytes)) as source:
+            audio_data = recognizer.record(source)
+        return recognizer.recognize_google(audio_data, language=lang)
+    except:
+        return "(speech recognition failed)"
 
 
-import re
-
-ALLOWED_TABLES = {"customers", "orders", "order_items", "products", "payments"}
-FORBIDDEN = [
-    ";", "--", "/*", "*/", "union", "information_schema",
-    "pg_", "case", "when", "sleep", "pg_sleep"
-]
-
-def query_database(sql: str):
-    safe_sql = sql.strip()
-
-    if not safe_sql.lower().startswith("select"):
-        raise ValueError("❌ Разрешены только SELECT запросы")
-
-    lowered = safe_sql.lower()
-    for bad in FORBIDDEN:
-        if bad in lowered:
-            raise ValueError(f"❌ Запрещённый SQL паттерн: {bad}")
-
-    tables = re.findall(r"from\s+([a-z_]+)", lowered)
-    joins = re.findall(r"join\s+([a-z_]+)", lowered)
-    all_tables = set(tables + joins)
-
-    if not all_tables:
-        raise ValueError("❌ SQL должен содержать FROM")
-
-    for table in all_tables:
-        if table not in ALLOWED_TABLES:
-            raise ValueError(f"❌ Доступ к таблице запрещён: {table}")
-
-    if "limit" not in lowered:
-        safe_sql += " LIMIT 20"
-
-    cursor.execute(safe_sql)
-    rows = cursor.fetchall()
-    colnames = [desc[0] for desc in cursor.description]
-    result = [dict(zip(colnames, row)) for row in rows]
-
-    return result
-
-
-def create_ticket(text: str, board_name: str = "Karina"):
-    client = TrelloClient(
-        api_key='1da7f18b31eaf401ed4dcfb1d272c815',
-        token='ATTAdd24b0c9ee01639d47020cd374d7fcee736d5ce36e3a79fbd1df83adab0d0f8eC9FCAFCF'
-    )
-
-    board = client.add_board(board_name)
-    print(f"Доска создана: {board.name} ({board.id})")
-
-    todo_list = board.add_list(name="Tickets")
-    print(f"Список создан: {todo_list.name} ({todo_list.id})")
-
-    card = todo_list.add_card("Новая карточка", text)
-    print(f"Карточка создана: {card.id}")
-
-    return "Тикет создан, спасибо!"
-
-
-functions = [
-    {
-        "name": "list_tables",
-        "description": "Получить список таблиц из базы данных",
-        "parameters": {"type": "object", "properties": {}}
-    },
-    {
-        "name": "query_database",
-        "description": "Выполнить SQL SELECT запрос (только SELECT)",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "sql": {"type": "string"}
-            },
-            "required": ["sql"]
-        },
-    },
-    {
-        "name": "create_ticket",
-        "description": "Создать тикет поддержки в Trello",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "title": {"type": "string"},
-                "description": {"type": "string"}
-            },
-            "required": ["title", "description"]
-        },
-    },
-]
-
-system_prompt = """
-Ты — Data Insights Agent.
-
-❗ ВСЕГДА вместо текста вызывай функцию.
-
-Структура базы данных:
-
-TABLE customers:
-  id SERIAL PRIMARY KEY
-  full_name TEXT
-  email TEXT
-  city TEXT
-
-TABLE orders:
-  id SERIAL PRIMARY KEY
-  customer_id INTEGER REFERENCES customers(id)
-  total_amount DECIMAL
-  status TEXT
-  order_date TIMESTAMP
-
-TABLE order_items:
-  id SERIAL PRIMARY KEY
-  order_id INTEGER REFERENCES orders(id)
-  product_id INTEGER REFERENCES products(id)
-  quantity INTEGER
-  unit_price DECIMAL
-
-TABLE products:
-  id SERIAL PRIMARY KEY
-  name TEXT
-  category TEXT
-  price DECIMAL
-
-TABLE payments:
-  id SERIAL PRIMARY KEY
-  order_id INTEGER REFERENCES orders(id)
-  amount DECIMAL
-  method TEXT
-
-Правила:
-- Всегда используй JOIN через customers.id
-- НЕЛЬЗЯ писать SQL в ответе (только function_call)
-- НЕЛЬЗЯ писать DELETE/UPDATE/DROP/INSERT
-- Есть статусы completed, pending, cancelled
-- У p просто id, а не product_id
-"""
-
-
-class ChatRequest(BaseModel):
-    message: str
-
-
-@app.post("/chat")
-def chat(data: ChatRequest):
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "http://localhost:8000/",
-        "X-Title": "Sales Insights Agent"
-    }
+def generate_image(prompt: str) -> Image.Image:
+    url = "https://api.deepai.org/api/text2img"
 
     response = requests.post(
-        "https://openrouter.ai/api/v1/chat/completions",
-        headers=headers,
-        json={
-            "model": "openai/gpt-4.1-mini",
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": data.message}
-            ],
-            "tools": [
-                {"type": "function", "function": fn} for fn in functions
-            ],
-            "tool_choice": "auto",
-            "max_tokens": 200,
-        }
+        url,
+        data={"text": prompt},
+        headers={"Api-Key": settings.DEEPAI_KEY}
     )
+    try:
+        data = response.json()
+    except:
+        raise Exception(f"DEEPAI ERROR — NOT JSON:\n{response.text}")
 
-    res = response.json()
-    msg = res["choices"][0]["message"]
+    if "output_url" not in data:
+        raise Exception(f"DEEPAI ERROR:\n{data}")
 
-    if "tool_calls" in msg:
-        for call in msg["tool_calls"]:
-            fn = call["function"]["name"]
-            args = json.loads(call["function"]["arguments"])
+    img_bytes = requests.get(data["output_url"]).content
+    return Image.open(io.BytesIO(img_bytes)).convert("RGB")
 
-            if fn == "list_tables":
-                return {"tables": list_tables()}
+st.set_page_config(page_title="Voice → Image", layout="centered")
 
-            if fn == "query_database":
-                sql = args["sql"]
-                if any(bad in sql.lower() for bad in ["delete", "drop", "update", "insert"]):
-                    return {"error": "⚠ Опасный SQL запрещён"}
-                return query_database(sql)
+st.markdown("""
+<style>
+h1 {
+    background: -webkit-linear-gradient(45deg, #6a5acd, #00bfff);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    font-size: 3rem !important;
+    font-weight: 800 !important;
+}
+.subtitle {
+    color: #666;
+    text-align:center;
+    margin-top: -20px;
+}
+.record-box {
+    padding: 20px;
+    border-radius: 12px;
+    background: #f8f9fc;
+    border: 1px solid #eaecef;
+}
+.result-box {
+    padding: 15px;
+    border-radius: 10px;
+    background: #f0fff4;
+    border: 1px solid #c6f6d5;
+}
+button[kind="primary"] {
+    border-radius: 12px !important;
+}
+</style>
+""", unsafe_allow_html=True)
 
-            if fn == "create_ticket":
-                return create_ticket(args["title"], args["description"])
+st.markdown("<h1>Voice → Text → Image</h1>", unsafe_allow_html=True)
 
-    return {"reply": msg.get("content")}
+st.divider()
 
+st.markdown("### Voice Recorder")
 
-if __name__ == "__main__":
+with st.container():
+    st.markdown('<div class="record-box">Click → Speak → Click again to stop recording</div>', unsafe_allow_html=True)
 
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+audio_bytes = audio_recorder(
+    pause_threshold=9999,
+    energy_threshold=None,
+    sample_rate=44_100
+)
+
+if audio_bytes:
+    st.audio(audio_bytes, format="audio/wav")
+
+st.divider()
+
+if st.button("Generate Image", use_container_width=True):
+    if not audio_bytes:
+        st.error("Please record audio first.")
+    else:
+        with st.spinner("Transcribing Speech..."):
+            text = transcribe_google(audio_bytes)
+
+        st.markdown(f"""
+        <div class="result-box">{text}</div>
+        """, unsafe_allow_html=True)
+
+        if text != "(speech recognition failed)":
+            with st.spinner("🎨 Generating Image..."):
+                img = generate_image(text)
+
+            st.image(img, use_container_width=True)
+            st.success("Done!")
